@@ -1,0 +1,36 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE/project metadata
+.idea/
+.vscode/
+git/
+
+# Raw and generated image files
+*.jpg
+*.jpeg
+*.png
+*.tif
+*.tiff
+*.bmp
+
+# Keep small UI assets that are part of the viewer template
+!interactive_viewer/assets/
+!interactive_viewer/assets/xjtu-emblem.png
+
+# Generated viewer data and experiment photo background
+interactive_viewer/viewer_data.json
+interactive_viewer/assets/endpoint-photo.jpg
+
+# Common workflow output folders, if this repo is used at an experiment root
+original/
+cropped/
+corrected/
+workflow_result/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.backup

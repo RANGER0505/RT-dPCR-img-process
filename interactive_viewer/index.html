@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XJTU-BEBC Real-time dPCR</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="window-shell">
+      <header class="titlebar">
+        <img class="app-mark" src="./assets/xjtu-emblem.png" alt="XJTU" />
+        <div class="divider"></div>
+        <h1>XJTU-BEBC&nbsp; Real-time dPCR</h1>
+        <div class="experiment-badge" id="experimentBadge"></div>
+        <div class="window-actions">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="chip-panel">
+          <div class="chip-toolbar">
+            <div class="stats" id="stats"></div>
+            <div class="legend">
+              <span><i class="dot positive"></i>Positive</span>
+              <span><i class="dot negative"></i>Negative</span>
+              <span><i class="dot deleted"></i>Removed</span>
+            </div>
+            <label class="opacity-control">
+              <span>Well opacity</span>
+              <input id="wellOpacity" type="range" min="15" max="100" value="88" />
+              <output id="wellOpacityValue" for="wellOpacity">88%</output>
+            </label>
+            <button class="photo-toggle" id="photoToggle" type="button" aria-expanded="false">
+              Show photo background
+            </button>
+          </div>
+          <canvas id="chipCanvas" aria-label="Endpoint chip interaction map"></canvas>
+          <div class="well-tip" id="wellTip"></div>
+        </div>
+
+        <aside class="charts">
+          <section class="single-chart">
+            <canvas id="singleCanvas" aria-label="Single amplification curve"></canvas>
+            <div class="chart-footer">
+              <div class="chart-label" id="selectedLabel">Select a well</div>
+              <div class="chart-metrics" id="chartMetrics"></div>
+            </div>
+          </section>
+          <section class="all-chart">
+            <canvas id="allCanvas" aria-label="All amplification curves"></canvas>
+            <div class="chart-footer overview-footer" id="overviewFooter"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>
