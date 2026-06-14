@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XJTU-BEBC Real-time dPCR</title>
+    <link rel="stylesheet" href="./styles.css?v=20260615-font1" />
+  </head>
+  <body>
+    <main class="lab-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-mark" src="./assets/xjtu-emblem.png" alt="XJTU" />
+          <div>
+            <strong>XJTU-BEBC</strong>
+            <span>RT-dPCR Workbench</span>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="Workbench sections">
+          <span class="nav-group">Workspace</span>
+          <button class="nav-item active" type="button" data-page="interactive">
+            <span class="nav-icon">01</span>
+            <span>Interactive Viewing Deck</span>
+          </button>
+          <button class="nav-item" type="button" data-page="browser">
+            <span class="nav-icon">02</span>
+            <span>RT-dPCR Result Browser</span>
+          </button>
+          <button class="nav-item" type="button" data-page="quality">
+            <span class="nav-icon">03</span>
+            <span>Image Correction QC</span>
+          </button>
+          <button class="nav-item" type="button" data-page="endpoint">
+            <span class="nav-icon">04</span>
+            <span>Endpoint Quantification</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <span class="status-dot"></span>
+          <div>
+            <strong id="sidebarExperiment">Experiment</strong>
+            <span>Local static viewer</span>
+          </div>
+        </div>
+      </aside>
+
+      <section class="main-panel">
+        <header class="topbar">
+          <div>
+            <h1 id="pageTitle">Interactive Viewing Deck</h1>
+            <p id="pageSubtitle">Endpoint chip interaction, single-well fluorescence curve, and curve-cluster highlighting.</p>
+          </div>
+          <div class="topbar-actions">
+            <div class="experiment-badge" id="experimentBadge"></div>
+          </div>
+        </header>
+
+        <section class="page active" id="page-interactive">
+          <section class="workspace">
+            <div class="chip-panel">
+              <div class="chip-toolbar">
+                <div class="stats" id="stats"></div>
+                <div class="legend">
+                  <span><i class="dot positive"></i>Positive</span>
+                  <span><i class="dot negative"></i>Negative</span>
+                  <span><i class="dot deleted"></i>Removed</span>
+                </div>
+                <form class="well-jump" id="wellJumpForm" autocomplete="off">
+                  <label for="wellJumpInput">Well #</label>
+                  <input id="wellJumpInput" type="number" inputmode="numeric" min="1" placeholder="ID" />
+                  <button id="wellJumpButton" type="submit">Go</button>
+                </form>
+                <label class="opacity-control">
+                  <span>Well opacity</span>
+                  <input id="wellOpacity" type="range" min="15" max="100" value="88" />
+                  <output id="wellOpacityValue" for="wellOpacity">88%</output>
+                </label>
+                <button class="photo-toggle" id="photoToggle" type="button" aria-expanded="false">
+                  Show photo background
+                </button>
+              </div>
+              <canvas id="chipCanvas" aria-label="Endpoint chip interaction map"></canvas>
+              <div class="well-tip" id="wellTip"></div>
+            </div>
+
+            <aside class="charts">
+              <section class="single-chart">
+                <canvas id="singleCanvas" aria-label="Single fluorescence signal curve"></canvas>
+                <div class="chart-footer">
+                  <div class="chart-headline">
+                    <div class="chart-label" id="selectedLabel">Select a well</div>
+                    <button class="save-curve" id="saveCurveButton" type="button">Save PNG</button>
+                  </div>
+                  <div class="chart-metrics" id="chartMetrics"></div>
+                </div>
+              </section>
+              <section class="all-chart">
+                <canvas id="allCanvas" aria-label="All fluorescence signal curves"></canvas>
+                <div class="chart-footer overview-footer" id="overviewFooter"></div>
+              </section>
+            </aside>
+          </section>
+        </section>
+
+        <section class="page" id="page-browser">
+          <div class="browser-layout">
+            <section class="work-card browser-main">
+              <div class="card-heading">
+                <div>
+                  <h2>RT-dPCR Result Browser</h2>
+                  <p>Browse exported result figures or select local image files from an experiment folder.</p>
+                </div>
+                <label class="file-picker">
+                  Select local images
+                  <input id="localImageInput" type="file" accept="image/*" multiple webkitdirectory />
+                </label>
+              </div>
+              <div class="image-stage">
+                <img id="resultImagePreview" alt="Selected RT-dPCR result" />
+                <div class="empty-state" id="browserEmpty">No image selected</div>
+              </div>
+            </section>
+
+            <aside class="work-card image-sidebar">
+              <div class="card-heading compact">
+                <h2>Image catalog</h2>
+                <span id="imageCatalogCount">0 images</span>
+              </div>
+              <div class="image-list" id="imageCatalog"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-quality">
+          <div class="qc-layout">
+            <section class="work-card">
+              <div class="card-heading compact">
+                <h2>Illumination Field Correction</h2>
+                <span>Before / after comparison</span>
+              </div>
+              <div class="comparison-grid">
+                <figure>
+                  <img id="qcBeforeImage" alt="Before illumination correction" />
+                  <figcaption>Before correction</figcaption>
+                </figure>
+                <figure>
+                  <img id="qcAfterImage" alt="After illumination correction" />
+                  <figcaption>After correction</figcaption>
+                </figure>
+              </div>
+            </section>
+
+            <section class="work-card">
+              <div class="card-heading compact">
+                <h2>Correction Field / 3D Map</h2>
+                <span>Flat-field or surface-map outputs</span>
+              </div>
+              <div class="map-grid" id="illuminationMapGrid"></div>
+            </section>
+
+            <section class="work-card">
+              <div class="card-heading compact">
+                <h2>Stage Screening Results</h2>
+                <span>Stage 1 and Stage 2 valid-well masks</span>
+              </div>
+              <div class="comparison-grid">
+                <figure>
+                  <img id="stage1Image" alt="Stage 1 screened wells" />
+                  <figcaption>Stage 1 valid wells</figcaption>
+                </figure>
+                <figure>
+                  <img id="stage2Image" alt="Stage 2 final wells" />
+                  <figcaption>Stage 2 final wells</figcaption>
+                </figure>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page" id="page-endpoint">
+          <div class="endpoint-layout">
+            <section class="work-card endpoint-figures">
+              <div class="card-heading compact">
+                <h2>Endpoint Fluorescence Classification</h2>
+                <span>Endpoint map and clustering scatter plot</span>
+              </div>
+              <div class="comparison-grid">
+                <figure>
+                  <img id="endpointMapImage" alt="Endpoint classification map" />
+                  <figcaption>Endpoint classification map</figcaption>
+                </figure>
+                <figure>
+                  <img id="endpointScatterImage" alt="Endpoint fluorescence scatter plot" />
+                  <figcaption>Endpoint fluorescence scatter plot</figcaption>
+                </figure>
+              </div>
+            </section>
+
+            <aside class="work-card method-card">
+              <h2>Digital PCR Endpoint Quantification</h2>
+              <p>
+                Endpoint dPCR classifies each partition as positive or negative after amplification.
+                The positive fraction is converted to the mean template occupancy per partition using Poisson statistics.
+              </p>
+              <div class="formula-box">
+                <span>p = k / n</span>
+                <span>&lambda; = -ln(1 - p)</span>
+                <span>copies = &lambda; &times; n</span>
+              </div>
+              <ul class="method-list">
+                <li><strong>k</strong>: number of positive partitions.</li>
+                <li><strong>n</strong>: number of accepted partitions after QC filtering.</li>
+                <li><strong>p</strong>: positive-partition fraction.</li>
+                <li><strong>&lambda;</strong>: mean target copies per partition after Poisson correction.</li>
+              </ul>
+              <div class="endpoint-summary" id="endpointSummary"></div>
+            </aside>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="./app.js?v=20260615-font1"></script>
+  </body>
+</html>
