@@ -43,6 +43,24 @@ const wellOpacityValueEl = document.getElementById("wellOpacityValue");
 const wellJumpFormEl = document.getElementById("wellJumpForm");
 const wellJumpInputEl = document.getElementById("wellJumpInput");
 const saveCurveButtonEl = document.getElementById("saveCurveButton");
+const navItems = Array.from(document.querySelectorAll(".nav-item"));
+const pages = Array.from(document.querySelectorAll(".page"));
+const pageTitleEl = document.getElementById("pageTitle");
+const pageSubtitleEl = document.getElementById("pageSubtitle");
+const sidebarExperimentEl = document.getElementById("sidebarExperiment");
+const localImageInputEl = document.getElementById("localImageInput");
+const imageCatalogEl = document.getElementById("imageCatalog");
+const imageCatalogCountEl = document.getElementById("imageCatalogCount");
+const resultImagePreviewEl = document.getElementById("resultImagePreview");
+const browserEmptyEl = document.getElementById("browserEmpty");
+const qcBeforeImageEl = document.getElementById("qcBeforeImage");
+const qcAfterImageEl = document.getElementById("qcAfterImage");
+const stage1ImageEl = document.getElementById("stage1Image");
+const stage2ImageEl = document.getElementById("stage2Image");
+const illuminationMapGridEl = document.getElementById("illuminationMapGrid");
+const endpointMapImageEl = document.getElementById("endpointMapImage");
+const endpointScatterImageEl = document.getElementById("endpointScatterImage");
+const endpointSummaryEl = document.getElementById("endpointSummary");
 
 state.chip.photoImage.src = "./assets/endpoint-photo.jpg";
 
@@ -65,9 +83,28 @@ const CT_BASELINE_CYCLES = 8;
 const CT_THRESHOLD_SD_MULTIPLIER = 10;
 const CT_MIN_THRESHOLD_DELTA = 2;
 const CT_MIN_VALID_AMPLITUDE = 5;
-const CHART_TITLE_FONT_SIZE = 16;
-const CHART_AXIS_FONT_SIZE = 13;
-const CHART_TICK_FONT_SIZE = 12;
+const CHART_TITLE_FONT_SIZE = 15;
+const CHART_AXIS_FONT_SIZE = 15;
+const CHART_TICK_FONT_SIZE = 14;
+
+const PAGE_META = {
+  interactive: {
+    title: "Interactive Viewing Deck",
+    subtitle: "Endpoint chip interaction, single-well fluorescence curve, and curve-cluster highlighting.",
+  },
+  browser: {
+    title: "RT-dPCR Result Browser",
+    subtitle: "Browse local experiment images and exported workflow figures.",
+  },
+  quality: {
+    title: "Image Correction QC",
+    subtitle: "Review illumination-field correction, representative frames, and stage screening outputs.",
+  },
+  endpoint: {
+    title: "Endpoint Quantification",
+    subtitle: "Endpoint fluorescence classification with digital PCR Poisson occupancy correction.",
+  },
+};
 
 function getCurveYRange() {
   const metaRange = state.data?.meta?.curveY;
@@ -235,10 +272,10 @@ function drawChipBase() {
 }
 
 function chartArea(canvas, compact = false) {
-  const left = 62;
-  const right = 16;
-  const top = 28;
-  const bottom = 38;
+  const left = 72;
+  const right = 18;
+  const top = 32;
+  const bottom = 46;
   return {
     x: left,
     y: top,
@@ -309,9 +346,9 @@ function drawAxes(ctx, canvas, area, yMin, yMax, title, yLabel, compact = false)
   ctx.font = `700 ${CHART_AXIS_FONT_SIZE}px Arial, Helvetica, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("PCR cycle number", area.x + area.w / 2, canvas.height - 12);
+  ctx.fillText("PCR cycle number", area.x + area.w / 2, canvas.height - 14);
   ctx.save();
-  ctx.translate(15, area.y + area.h / 2);
+  ctx.translate(17, area.y + area.h / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.fillText(yLabel, 0, 0);
   ctx.restore();
@@ -520,7 +557,7 @@ function drawAllBase() {
   const area = chartArea(base, false);
   const { min, max } = getCurveYRange();
 
-  drawAxes(ctx, base, area, min, max, "RT-dPCR Smoothed Fluorescence Signal Curves", getYAxisLabel(), false);
+  drawAxes(ctx, base, area, min, max, "RT-dPCR Smoothed Signals", getYAxisLabel(), false);
   ctx.save();
   ctx.rect(area.x, area.y, area.w, area.h);
   ctx.clip();
@@ -593,7 +630,7 @@ function drawSingleChart() {
   }
 
   const { min: yMin, max: yMax } = getCurveYRange();
-  drawAxes(ctx, canvas, area, yMin, yMax, "Single-well RT-dPCR Fluorescence Signal Curve", getYAxisLabel(), true);
+  drawAxes(ctx, canvas, area, yMin, yMax, "Single-well RT-dPCR Signal", getYAxisLabel(), true);
   const metrics = estimateCt(curve);
   ctx.save();
   ctx.rect(area.x, area.y, area.w, area.h);
@@ -821,8 +858,184 @@ function redrawAll() {
   drawAllChart();
 }
 
+function setActivePage(pageName) {
+  const meta = PAGE_META[pageName] || PAGE_META.interactive;
+  navItems.forEach((item) => item.classList.toggle("active", item.dataset.page === pageName));
+  pages.forEach((page) => page.classList.toggle("active", page.id === `page-${pageName}`));
+  pageTitleEl.textContent = meta.title;
+  pageSubtitleEl.textContent = meta.subtitle;
+  if (pageName === "interactive") {
+    window.requestAnimationFrame(redrawAll);
+  }
+}
+
+function getImageAssets() {
+  return state.data?.meta?.imageAssets || {
+    resultImages: [],
+    sampleImages: [],
+    qc: {},
+    endpoint: {},
+  };
+}
+
+function setImageElement(imageEl, item, fallbackText = "Image not available") {
+  if (!imageEl) return;
+  if (item?.src) {
+    imageEl.src = item.src;
+    imageEl.alt = item.label || item.fileName || "RT-dPCR image";
+    imageEl.dataset.loaded = "true";
+  } else {
+    imageEl.removeAttribute("src");
+    imageEl.alt = fallbackText;
+    imageEl.dataset.loaded = "false";
+  }
+}
+
+function fitResultPreviewImage() {
+  if (!resultImagePreviewEl?.src) return;
+  const stage = resultImagePreviewEl.closest(".image-stage");
+  if (!stage || !resultImagePreviewEl.naturalWidth || !resultImagePreviewEl.naturalHeight) return;
+  const padding = 42;
+  const availableWidth = Math.max(120, stage.clientWidth - padding);
+  const availableHeight = Math.max(120, stage.clientHeight - padding);
+  const scale = Math.min(
+    availableWidth / resultImagePreviewEl.naturalWidth,
+    availableHeight / resultImagePreviewEl.naturalHeight
+  );
+  const width = Math.floor(resultImagePreviewEl.naturalWidth * scale);
+  const height = Math.floor(resultImagePreviewEl.naturalHeight * scale);
+  resultImagePreviewEl.style.width = `${width}px`;
+  resultImagePreviewEl.style.height = `${height}px`;
+}
+
+function makeImageButton(item, index, onSelect) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.innerHTML = `${item.label || item.fileName || `Image ${index + 1}`}<small>${item.category || "local"} | ${item.fileName || ""}</small>`;
+  button.addEventListener("click", () => onSelect(item, button));
+  return button;
+}
+
+function selectBrowserImage(item, activeButton) {
+  if (!item) return;
+  setImageElement(resultImagePreviewEl, item);
+  resultImagePreviewEl.style.width = "";
+  resultImagePreviewEl.style.height = "";
+  if (resultImagePreviewEl.complete) {
+    window.requestAnimationFrame(fitResultPreviewImage);
+  }
+  browserEmptyEl.textContent = item.label || item.fileName || "Selected image";
+  Array.from(imageCatalogEl.children).forEach((button) => button.classList.toggle("active", button === activeButton));
+}
+
+function renderImageBrowser(items) {
+  imageCatalogEl.innerHTML = "";
+  imageCatalogCountEl.textContent = `${items.length} image${items.length === 1 ? "" : "s"}`;
+  if (!items.length) {
+    resultImagePreviewEl.removeAttribute("src");
+    browserEmptyEl.textContent = "Select local images or regenerate the viewer to import workflow figures.";
+    imageCatalogEl.innerHTML = `<div class="placeholder-card">No image catalog is available yet.</div>`;
+    return;
+  }
+  items.forEach((item, index) => {
+    imageCatalogEl.appendChild(makeImageButton(item, index, selectBrowserImage));
+  });
+  selectBrowserImage(items[0], imageCatalogEl.firstElementChild);
+}
+
+function renderManifestImageBrowser() {
+  const assets = getImageAssets();
+  const items = [
+    ...(assets.resultImages || []),
+    ...(assets.sampleImages || []),
+  ];
+  renderImageBrowser(items);
+}
+
+function loadLocalImages(event) {
+  const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"));
+  const items = files.map((file) => ({
+    label: file.webkitRelativePath || file.name,
+    category: "local",
+    fileName: file.name,
+    src: URL.createObjectURL(file),
+  }));
+  renderImageBrowser(items);
+}
+
+function renderImageTile(item, label) {
+  if (!item?.src) {
+    const placeholder = document.createElement("div");
+    placeholder.className = "placeholder-card";
+    placeholder.textContent = `${label} image was not found in this workflow output.`;
+    return placeholder;
+  }
+  const tile = document.createElement("figure");
+  tile.className = "map-tile";
+  const image = document.createElement("img");
+  image.src = item.src;
+  image.alt = item.label || label;
+  const caption = document.createElement("span");
+  caption.textContent = label;
+  tile.append(image, caption);
+  return tile;
+}
+
+function renderQualityPage() {
+  const assets = getImageAssets();
+  const qc = assets.qc || {};
+  setImageElement(qcBeforeImageEl, qc.beforeCorrection, "Before correction image not available");
+  setImageElement(qcAfterImageEl, qc.afterCorrection, "After correction image not available");
+  setImageElement(stage1ImageEl, qc.stage1, "Stage 1 image not available");
+  setImageElement(stage2ImageEl, qc.stage2, "Stage 2 image not available");
+
+  illuminationMapGridEl.innerHTML = "";
+  const maps = qc.illuminationMaps || [];
+  if (maps.length) {
+    maps.slice(0, 4).forEach((item, index) => {
+      illuminationMapGridEl.appendChild(renderImageTile(item, item.label || `Correction map ${index + 1}`));
+    });
+  } else {
+    illuminationMapGridEl.appendChild(renderImageTile(null, "Illumination field / 3D map"));
+  }
+}
+
+function renderEndpointPage() {
+  const assets = getImageAssets();
+  const endpoint = assets.endpoint || {};
+  setImageElement(endpointMapImageEl, endpoint.map, "Endpoint map not available");
+  setImageElement(endpointScatterImageEl, endpoint.scatter, "Endpoint scatter plot not available");
+
+  const meta = state.data.meta;
+  const positive = Number(meta.positiveCount || 0);
+  const negative = Number(meta.negativeCount || 0);
+  const accepted = positive + negative;
+  const fraction = accepted > 0 ? positive / accepted : 0;
+  const lambda = fraction > 0 && fraction < 1 ? -Math.log(1 - fraction) : null;
+  const poissonText = lambda === null
+    ? "Poisson occupancy cannot be finite when the accepted partitions are all positive or no accepted partition exists."
+    : `Poisson-corrected mean occupancy: ${lambda.toFixed(4)} copies per accepted partition.`;
+  endpointSummaryEl.innerHTML = [
+    `<div>Accepted partitions: ${accepted}</div>`,
+    `<div>Positive partitions: ${positive}</div>`,
+    `<div>Positive fraction p: ${accepted ? fraction.toFixed(4) : "NA"}</div>`,
+    `<div>${poissonText}</div>`,
+  ].join("");
+}
+
+function initializeWorkbenchPages() {
+  sidebarExperimentEl.textContent = getExperimentId();
+  navItems.forEach((item) => {
+    item.addEventListener("click", () => setActivePage(item.dataset.page));
+  });
+  localImageInputEl.addEventListener("change", loadLocalImages);
+  renderManifestImageBrowser();
+  renderQualityPage();
+  renderEndpointPage();
+}
+
 async function init() {
-  const response = await fetch("./viewer_data.json");
+  const response = await fetch(`./viewer_data.json?v=${Date.now()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error("viewer_data.json not found. Run interactive_chip_viewer.py first.");
   }
@@ -830,6 +1043,7 @@ async function init() {
   renderStats();
   state.selected = pickInitialWell();
   updateWellOpacity();
+  initializeWorkbenchPages();
   state.chip.photoImage.addEventListener("load", () => {
     state.chip.baseDirty = true;
     if (state.chip.showPhotoBackground) drawChip();
@@ -860,9 +1074,13 @@ async function init() {
   wellOpacityEl.addEventListener("input", updateWellOpacity);
   wellJumpFormEl.addEventListener("submit", jumpToWellById);
   saveCurveButtonEl.addEventListener("click", saveSelectedCurvePng);
+  resultImagePreviewEl.addEventListener("load", fitResultPreviewImage);
 
   window.addEventListener("resize", () => {
-    window.requestAnimationFrame(redrawAll);
+    window.requestAnimationFrame(() => {
+      redrawAll();
+      fitResultPreviewImage();
+    });
   });
 }
 
