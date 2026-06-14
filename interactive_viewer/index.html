@@ -29,6 +29,11 @@
               <span><i class="dot negative"></i>Negative</span>
               <span><i class="dot deleted"></i>Removed</span>
             </div>
+            <form class="well-jump" id="wellJumpForm" autocomplete="off">
+              <label for="wellJumpInput">Well #</label>
+              <input id="wellJumpInput" type="number" inputmode="numeric" min="1" placeholder="ID" />
+              <button id="wellJumpButton" type="submit">Go</button>
+            </form>
             <label class="opacity-control">
               <span>Well opacity</span>
               <input id="wellOpacity" type="range" min="15" max="100" value="88" />
@@ -46,7 +51,10 @@
           <section class="single-chart">
             <canvas id="singleCanvas" aria-label="Single amplification curve"></canvas>
             <div class="chart-footer">
-              <div class="chart-label" id="selectedLabel">Select a well</div>
+              <div class="chart-headline">
+                <div class="chart-label" id="selectedLabel">Select a well</div>
+                <button class="save-curve" id="saveCurveButton" type="button">Save PNG</button>
+              </div>
               <div class="chart-metrics" id="chartMetrics"></div>
             </div>
           </section>

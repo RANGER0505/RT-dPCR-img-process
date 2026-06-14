@@ -40,6 +40,9 @@ const overviewFooterEl = document.getElementById("overviewFooter");
 const photoToggleEl = document.getElementById("photoToggle");
 const wellOpacityEl = document.getElementById("wellOpacity");
 const wellOpacityValueEl = document.getElementById("wellOpacityValue");
+const wellJumpFormEl = document.getElementById("wellJumpForm");
+const wellJumpInputEl = document.getElementById("wellJumpInput");
+const saveCurveButtonEl = document.getElementById("saveCurveButton");
 
 state.chip.photoImage.src = "./assets/endpoint-photo.jpg";
 
@@ -58,8 +61,13 @@ const COLORS = {
 
 const CURVE_Y_MIN = 80;
 const CURVE_Y_MAX = 160;
-const CT_BASELINE_CYCLES = 5;
-const CT_MIN_AMPLITUDE = 3;
+const CT_BASELINE_CYCLES = 8;
+const CT_THRESHOLD_SD_MULTIPLIER = 10;
+const CT_MIN_THRESHOLD_DELTA = 2;
+const CT_MIN_VALID_AMPLITUDE = 5;
+const CHART_TITLE_FONT_SIZE = 16;
+const CHART_AXIS_FONT_SIZE = 13;
+const CHART_TICK_FONT_SIZE = 12;
 
 function getCurveYRange() {
   const metaRange = state.data?.meta?.curveY;
@@ -227,10 +235,10 @@ function drawChipBase() {
 }
 
 function chartArea(canvas, compact = false) {
-  const left = compact ? 52 : 64;
-  const right = compact ? 18 : 22;
-  const top = compact ? 38 : 34;
-  const bottom = compact ? 46 : 52;
+  const left = 62;
+  const right = 16;
+  const top = 28;
+  const bottom = 38;
   return {
     x: left,
     y: top,
@@ -258,17 +266,17 @@ function drawAxes(ctx, canvas, area, yMin, yMax, title, yLabel, compact = false)
   ctx.fillStyle = "#fff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.strokeStyle = "#4f6471";
-  ctx.lineWidth = 1.8;
+  ctx.strokeStyle = "#111";
+  ctx.lineWidth = 2;
   ctx.strokeRect(area.x, area.y, area.w, area.h);
 
   const cycleMax = getMaxCycle();
-  const yTicks = niceTicks(yMin, yMax, compact ? 4 : 5);
-  ctx.font = `700 ${compact ? 12 : 14}px Arial, Helvetica, sans-serif`;
+  const yTicks = niceTicks(yMin, yMax, 5);
+  ctx.font = `700 ${CHART_TICK_FONT_SIZE}px Arial, Helvetica, sans-serif`;
   ctx.fillStyle = "#111";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  ctx.strokeStyle = COLORS.grid;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.09)";
   for (const tick of yTicks) {
     const y = valueToY(tick, yMin, yMax, area);
     ctx.beginPath();
@@ -283,7 +291,7 @@ function drawAxes(ctx, canvas, area, yMin, yMax, title, yLabel, compact = false)
   ctx.textBaseline = "top";
   for (const tick of xTicks) {
     const x = cycleToX(tick, cycleMax, area);
-    ctx.strokeStyle = COLORS.grid;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.09)";
     ctx.beginPath();
     ctx.moveTo(x, area.y);
     ctx.lineTo(x, area.y + area.h);
@@ -292,18 +300,18 @@ function drawAxes(ctx, canvas, area, yMin, yMax, title, yLabel, compact = false)
   }
 
   if (title) {
-    ctx.font = `700 ${compact ? 16 : 20}px Arial, Helvetica, sans-serif`;
+    ctx.font = `700 ${CHART_TITLE_FONT_SIZE}px Arial, Helvetica, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
     ctx.fillText(title, area.x + area.w / 2, 4);
   }
 
-  ctx.font = `700 ${compact ? 12 : 16}px Arial, Helvetica, sans-serif`;
+  ctx.font = `700 ${CHART_AXIS_FONT_SIZE}px Arial, Helvetica, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("PCR cycle number", area.x + area.w / 2, canvas.height - (compact ? 12 : 22));
+  ctx.fillText("PCR cycle number", area.x + area.w / 2, canvas.height - 12);
   ctx.save();
-  ctx.translate(compact ? 14 : 16, area.y + area.h / 2);
+  ctx.translate(15, area.y + area.h / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.fillText(yLabel, 0, 0);
   ctx.restore();
@@ -315,18 +323,41 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function standardDeviation(values, mean) {
+  if (values.length <= 1) return 0;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
 function estimateCt(curve) {
   const baselineCycles = Math.max(1, Math.min(CT_BASELINE_CYCLES, curve.length));
-  const baseline = average(curve.slice(0, baselineCycles));
+  const baselineValues = curve.slice(0, baselineCycles);
+  const baseline = average(baselineValues);
+  const baselineStd = standardDeviation(baselineValues, baseline);
   const peak = Math.max(...curve);
   const endpoint = curve[curve.length - 1];
   const amplitude = peak - baseline;
-  if (amplitude < CT_MIN_AMPLITUDE) {
-    return { baseline, peak, endpoint, amplitude, threshold: null, ct: null };
+  const thresholdDelta = Math.max(
+    baselineStd * CT_THRESHOLD_SD_MULTIPLIER,
+    CT_MIN_THRESHOLD_DELTA,
+  );
+  const threshold = baseline + thresholdDelta;
+
+  if (amplitude < Math.max(CT_MIN_VALID_AMPLITUDE, thresholdDelta)) {
+    return {
+      baseline,
+      baselineStd,
+      peak,
+      endpoint,
+      amplitude,
+      threshold,
+      thresholdDelta,
+      ct: null,
+    };
   }
-  const threshold = baseline + amplitude * 0.5;
+
   let ct = null;
-  for (let index = 1; index < curve.length; index += 1) {
+  for (let index = baselineCycles; index < curve.length; index += 1) {
     const previous = curve[index - 1];
     const current = curve[index];
     if (previous < threshold && current >= threshold) {
@@ -336,7 +367,7 @@ function estimateCt(curve) {
       break;
     }
   }
-  return { baseline, peak, endpoint, amplitude, threshold, ct };
+  return { baseline, baselineStd, peak, endpoint, amplitude, threshold, thresholdDelta, ct };
 }
 
 function getCtDisplay(well, metrics) {
@@ -380,6 +411,7 @@ function renderChartMetrics(well, curve) {
   chartMetricsEl.innerHTML = [
     `<span class="metric-pill ${statusClass}">${statusLabel}</span>`,
     `<span class="metric-pill">Ct ${getCtDisplay(well, metrics)}</span>`,
+    `<span class="metric-pill">Threshold ${formatMetricValue(metrics.threshold, 1)}</span>`,
     `<span class="metric-pill">Baseline ${formatMetricValue(metrics.baseline, 1)}</span>`,
     `<span class="metric-pill">Peak ${formatMetricValue(metrics.peak, 1)}</span>`,
     `<span class="metric-pill">Delta ${formatMetricValue(metrics.amplitude, 1)}</span>`,
@@ -488,7 +520,7 @@ function drawAllBase() {
   const area = chartArea(base, false);
   const { min, max } = getCurveYRange();
 
-  drawAxes(ctx, base, area, min, max, "RT-dPCR Smoothed Amplification Curves", getYAxisLabel(), false);
+  drawAxes(ctx, base, area, min, max, "RT-dPCR Smoothed Fluorescence Signal Curves", getYAxisLabel(), false);
   ctx.save();
   ctx.rect(area.x, area.y, area.w, area.h);
   ctx.clip();
@@ -547,6 +579,7 @@ function drawSingleChart() {
     drawSinglePlaceholder(ctx, canvas, area);
     selectedLabelEl.textContent = state.selected?.deleted ? "Removed well" : "Select a well";
     chartMetricsEl.innerHTML = "";
+    updateSaveCurveButton();
     return;
   }
 
@@ -555,11 +588,12 @@ function drawSingleChart() {
     drawSinglePlaceholder(ctx, canvas, area);
     selectedLabelEl.textContent = "No curve data";
     chartMetricsEl.innerHTML = "";
+    updateSaveCurveButton();
     return;
   }
 
   const { min: yMin, max: yMax } = getCurveYRange();
-  drawAxes(ctx, canvas, area, yMin, yMax, "Single-well RT-dPCR Amplification Curve", getYAxisLabel(), true);
+  drawAxes(ctx, canvas, area, yMin, yMax, "Single-well RT-dPCR Fluorescence Signal Curve", getYAxisLabel(), true);
   const metrics = estimateCt(curve);
   ctx.save();
   ctx.rect(area.x, area.y, area.w, area.h);
@@ -583,6 +617,7 @@ function drawSingleChart() {
   selectedLabelEl.textContent =
     `#${state.selected.id} ${state.selected.classification === "positive" ? "Positive" : "Negative"}` + hiddenText;
   renderChartMetrics(state.selected, curve);
+  updateSaveCurveButton();
 }
 
 function drawSinglePlaceholder(ctx, canvas, area) {
@@ -658,9 +693,86 @@ function showTip(well, event) {
 function selectWell(well) {
   if (!well) return;
   state.selected = well;
+  if (wellJumpInputEl) {
+    wellJumpInputEl.value = String(well.id);
+  }
   drawChip();
   drawSingleChart();
   drawAllChart();
+}
+
+function updateSaveCurveButton() {
+  if (!saveCurveButtonEl) return;
+  const hasCurve = Boolean(
+    state.selected &&
+    !state.selected.deleted &&
+    state.selected.curveKey &&
+    state.data?.singleCurves?.[state.selected.curveKey],
+  );
+  saveCurveButtonEl.disabled = !hasCurve;
+  saveCurveButtonEl.textContent = hasCurve ? "Save PNG" : "No curve";
+}
+
+function findWellById(idText) {
+  const normalized = String(idText || "").trim();
+  if (!normalized) return null;
+  return state.data?.wells?.find((well) => String(well.id) === normalized) || null;
+}
+
+function jumpToWellById(event) {
+  event.preventDefault();
+  const idText = wellJumpInputEl.value.trim();
+  const well = findWellById(idText);
+  if (!well) {
+    wellJumpInputEl.select();
+    selectedLabelEl.textContent = idText ? `Well #${idText} not found` : "Enter a well ID";
+    chartMetricsEl.innerHTML = "";
+    return;
+  }
+  state.hovered = null;
+  tipEl.classList.remove("visible");
+  selectWell(well);
+}
+
+function sanitizeFilename(value) {
+  return String(value).replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "_");
+}
+
+function saveSelectedCurvePng() {
+  if (!state.selected || state.selected.deleted) return;
+  const curve = state.data.singleCurves[state.selected.curveKey];
+  if (!curve) return;
+
+  drawSingleChart();
+  const source = state.single.canvas;
+  const labelHeight = 46;
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = source.width;
+  exportCanvas.height = source.height + labelHeight;
+  const ctx = exportCanvas.getContext("2d");
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  ctx.drawImage(source, 0, 0);
+
+  const dpr = window.devicePixelRatio || 1;
+  const label = `Experiment ${getExperimentId()} | Well #${state.selected.id} | ${state.selected.classification}`;
+  ctx.fillStyle = "rgba(9, 44, 61, 0.95)";
+  ctx.fillRect(0, source.height, exportCanvas.width, labelHeight);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `700 ${Math.round(15 * dpr)}px Arial, Helvetica, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, exportCanvas.width / 2, source.height + labelHeight / 2);
+
+  const link = document.createElement("a");
+  const experiment = sanitizeFilename(getExperimentId());
+  const wellId = sanitizeFilename(state.selected.id);
+  link.download = `${experiment}_well_${wellId}_single_curve.png`;
+  link.href = exportCanvas.toDataURL("image/png");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 function renderStats() {
@@ -699,6 +811,9 @@ function redrawAll() {
   if (!state.data) return;
   state.all.baseDirty = true;
   state.chip.baseDirty = true;
+  if (state.selected && wellJumpInputEl) {
+    wellJumpInputEl.value = String(state.selected.id);
+  }
   experimentBadgeEl.textContent = `Experiment ${getExperimentId()}`;
   overviewFooterEl.textContent = `${getExperimentId()} | ${getYAxisLabel()}`;
   drawChip();
@@ -743,6 +858,8 @@ async function init() {
 
   photoToggleEl.addEventListener("click", toggleEndpointPhoto);
   wellOpacityEl.addEventListener("input", updateWellOpacity);
+  wellJumpFormEl.addEventListener("submit", jumpToWellById);
+  saveCurveButtonEl.addEventListener("click", saveSelectedCurvePng);
 
   window.addEventListener("resize", () => {
     window.requestAnimationFrame(redrawAll);
