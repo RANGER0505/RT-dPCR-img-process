@@ -80,12 +80,15 @@ const COLORS = {
 const CURVE_Y_MIN = 80;
 const CURVE_Y_MAX = 160;
 const CT_BASELINE_CYCLES = 8;
-const CT_THRESHOLD_SD_MULTIPLIER = 10;
-const CT_MIN_THRESHOLD_DELTA = 2;
-const CT_MIN_VALID_AMPLITUDE = 5;
-const CHART_TITLE_FONT_SIZE = 15;
-const CHART_AXIS_FONT_SIZE = 15;
-const CHART_TICK_FONT_SIZE = 14;
+const CT_NOISE_MULTIPLIER = 4;
+const CT_MIN_THRESHOLD_DELTA = 0.8;
+const CT_MIN_VALID_AMPLITUDE = 2;
+const CT_AMPLITUDE_FRACTION = 0.16;
+const CT_MAX_THRESHOLD_FRACTION = 0.35;
+const CT_SLOPE_FRACTION = 0.18;
+const CHART_TITLE_FONT_SIZE = 21;
+const CHART_AXIS_FONT_SIZE = 21;
+const CHART_TICK_FONT_SIZE = 20;
 
 const PAGE_META = {
   interactive: {
@@ -272,10 +275,10 @@ function drawChipBase() {
 }
 
 function chartArea(canvas, compact = false) {
-  const left = 72;
-  const right = 18;
-  const top = 32;
-  const bottom = 46;
+  const left = 88;
+  const right = 20;
+  const top = 42;
+  const bottom = 60;
   return {
     x: left,
     y: top,
@@ -312,15 +315,26 @@ function drawAxes(ctx, canvas, area, yMin, yMax, title, yLabel, compact = false)
   ctx.font = `700 ${CHART_TICK_FONT_SIZE}px Arial, Helvetica, sans-serif`;
   ctx.fillStyle = "#111";
   ctx.textAlign = "right";
-  ctx.textBaseline = "middle";
   ctx.strokeStyle = "rgba(0, 0, 0, 0.09)";
   for (const tick of yTicks) {
-    const y = valueToY(tick, yMin, yMax, area);
+    const rawY = valueToY(tick, yMin, yMax, area);
+    const plotTop = area.y + 2;
+    const plotBottom = area.y + area.h - 2;
+    const y = Math.min(Math.max(rawY, plotTop), plotBottom);
     ctx.beginPath();
     ctx.moveTo(area.x, y);
     ctx.lineTo(area.x + area.w, y);
     ctx.stroke();
-    ctx.fillText(String(Math.round(tick)), area.x - 7, y);
+    if (rawY <= area.y + 0.5) {
+      ctx.textBaseline = "top";
+      ctx.fillText(String(Math.round(tick)), area.x - 7, area.y + 3);
+    } else if (rawY >= area.y + area.h - 0.5) {
+      ctx.textBaseline = "bottom";
+      ctx.fillText(String(Math.round(tick)), area.x - 7, area.y + area.h - 3);
+    } else {
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(Math.round(tick)), area.x - 7, y);
+    }
   }
 
   const xTicks = [0, 10, 20, 30, 40].filter((tick) => tick <= cycleMax);
@@ -360,27 +374,73 @@ function average(values) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function standardDeviation(values, mean) {
   if (values.length <= 1) return 0;
   const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance);
 }
 
+function robustSigma(values) {
+  if (values.length <= 1) return 0;
+  const center = median(values);
+  const deviations = values.map((value) => Math.abs(value - center));
+  const madSigma = median(deviations) * 1.4826;
+  const stdSigma = standardDeviation(values, average(values));
+  return Math.max(madSigma, stdSigma * 0.35);
+}
+
+function smoothSeries(values, radius = 1) {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length, index + radius + 1);
+    return average(values.slice(start, end));
+  });
+}
+
 function estimateCt(curve) {
   const baselineCycles = Math.max(1, Math.min(CT_BASELINE_CYCLES, curve.length));
-  const baselineValues = curve.slice(0, baselineCycles);
-  const baseline = average(baselineValues);
-  const baselineStd = standardDeviation(baselineValues, baseline);
-  const peak = Math.max(...curve);
-  const endpoint = curve[curve.length - 1];
+  const smoothed = smoothSeries(curve, 1);
+  const baselineValues = smoothed.slice(0, baselineCycles);
+  const baseline = median(baselineValues);
+  const baselineStd = robustSigma(baselineValues);
+  const peak = Math.max(...smoothed);
+  const endpoint = smoothed[smoothed.length - 1];
   const amplitude = peak - baseline;
-  const thresholdDelta = Math.max(
-    baselineStd * CT_THRESHOLD_SD_MULTIPLIER,
+
+  const slopes = [];
+  for (let index = 1; index < smoothed.length; index += 1) {
+    slopes.push(smoothed[index] - smoothed[index - 1]);
+  }
+  const slopeNoise = robustSigma(slopes.slice(0, Math.max(1, baselineCycles - 1)));
+  let maxSlope = -Infinity;
+  let maxSlopeIndex = baselineCycles;
+  for (let index = baselineCycles; index < slopes.length; index += 1) {
+    if (slopes[index] > maxSlope) {
+      maxSlope = slopes[index];
+      maxSlopeIndex = index + 1;
+    }
+  }
+
+  const minAmplitude = Math.max(CT_MIN_VALID_AMPLITUDE, baselineStd * CT_NOISE_MULTIPLIER);
+  const minSlope = Math.max(slopeNoise * 2, baselineStd * 0.18, 0.01);
+  let thresholdDelta = Math.max(
+    baselineStd * CT_NOISE_MULTIPLIER,
+    amplitude * CT_AMPLITUDE_FRACTION,
     CT_MIN_THRESHOLD_DELTA,
   );
+  if (amplitude > 0) {
+    thresholdDelta = Math.min(thresholdDelta, amplitude * CT_MAX_THRESHOLD_FRACTION);
+  }
   const threshold = baseline + thresholdDelta;
 
-  if (amplitude < Math.max(CT_MIN_VALID_AMPLITUDE, thresholdDelta)) {
+  if (amplitude < minAmplitude || maxSlope < minSlope || !Number.isFinite(maxSlope)) {
     return {
       baseline,
       baselineStd,
@@ -389,14 +449,22 @@ function estimateCt(curve) {
       amplitude,
       threshold,
       thresholdDelta,
+      maxSlope,
+      method: "adaptive",
       ct: null,
     };
   }
 
+  const slopeFloor = Math.max(maxSlope * CT_SLOPE_FRACTION, slopeNoise * 1.5, baselineStd * 0.15, 0.01);
+  let riseStart = maxSlopeIndex;
+  while (riseStart > baselineCycles && slopes[riseStart - 1] >= slopeFloor) {
+    riseStart -= 1;
+  }
+  const searchStart = Math.max(1, riseStart - 1);
   let ct = null;
-  for (let index = baselineCycles; index < curve.length; index += 1) {
-    const previous = curve[index - 1];
-    const current = curve[index];
+  for (let index = searchStart; index < smoothed.length; index += 1) {
+    const previous = smoothed[index - 1];
+    const current = smoothed[index];
     if (previous < threshold && current >= threshold) {
       const span = current - previous || 1;
       const fraction = (threshold - previous) / span;
@@ -404,7 +472,19 @@ function estimateCt(curve) {
       break;
     }
   }
-  return { baseline, baselineStd, peak, endpoint, amplitude, threshold, thresholdDelta, ct };
+  return {
+    baseline,
+    baselineStd,
+    peak,
+    endpoint,
+    amplitude,
+    threshold,
+    thresholdDelta,
+    maxSlope,
+    riseStart,
+    method: "adaptive",
+    ct,
+  };
 }
 
 function getCtDisplay(well, metrics) {
@@ -448,6 +528,7 @@ function renderChartMetrics(well, curve) {
   chartMetricsEl.innerHTML = [
     `<span class="metric-pill ${statusClass}">${statusLabel}</span>`,
     `<span class="metric-pill">Ct ${getCtDisplay(well, metrics)}</span>`,
+    `<span class="metric-pill">Adaptive Cq</span>`,
     `<span class="metric-pill">Threshold ${formatMetricValue(metrics.threshold, 1)}</span>`,
     `<span class="metric-pill">Baseline ${formatMetricValue(metrics.baseline, 1)}</span>`,
     `<span class="metric-pill">Peak ${formatMetricValue(metrics.peak, 1)}</span>`,
@@ -529,7 +610,7 @@ function drawCtMarker(ctx, canvas, area, yMin, yMax, metrics) {
   ctx.fill();
 
   const label = `Ct ${formatMetricValue(metrics.ct, 1)}`;
-  ctx.font = "700 12px Arial, Helvetica, sans-serif";
+  ctx.font = "700 18px Arial, Helvetica, sans-serif";
   const labelWidth = ctx.measureText(label).width + 14;
   const labelX = Math.min(Math.max(x + 8, area.x + 4), area.x + area.w - labelWidth - 4);
   const labelY = Math.max(area.y + 8, y - 28);
@@ -775,37 +856,166 @@ function sanitizeFilename(value) {
   return String(value).replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "_");
 }
 
+function drawNatureStyleSingleCurve(exportCanvas, curve, well) {
+  const ctx = exportCanvas.getContext("2d");
+  const width = exportCanvas.width;
+  const height = exportCanvas.height;
+  const palette = {
+    blueMain: "#0F4D92",
+    redStrong: "#B64342",
+    neutralMid: "#767676",
+    neutralDark: "#4D4D4D",
+    neutralBlack: "#272727",
+  };
+  const margin = { left: 170, right: 58, top: 110, bottom: 150 };
+  const area = {
+    x: margin.left,
+    y: margin.top,
+    w: width - margin.left - margin.right,
+    h: height - margin.top - margin.bottom,
+  };
+  const { min: yMin, max: yMax } = getCurveYRange();
+  const cycleMax = getMaxCycle();
+  const metrics = estimateCt(curve);
+
+  const xOf = (cycle) => area.x + (cycle / Math.max(1, cycleMax)) * area.w;
+  const yOf = (value) => area.y + area.h - ((value - yMin) / Math.max(0.001, yMax - yMin)) * area.h;
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.strokeStyle = palette.neutralBlack;
+  ctx.lineWidth = 4;
+  ctx.lineCap = "square";
+  ctx.beginPath();
+  ctx.moveTo(area.x, area.y);
+  ctx.lineTo(area.x, area.y + area.h);
+  ctx.lineTo(area.x + area.w, area.y + area.h);
+  ctx.stroke();
+
+  const yTicks = niceTicks(yMin, yMax, 5);
+  ctx.font = "700 28px Arial, Helvetica, sans-serif";
+  ctx.fillStyle = palette.neutralBlack;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const tick of yTicks) {
+    const y = Math.min(Math.max(yOf(tick), area.y), area.y + area.h);
+    ctx.strokeStyle = palette.neutralBlack;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(area.x - 11, y);
+    ctx.lineTo(area.x, y);
+    ctx.stroke();
+    ctx.fillText(String(Math.round(tick)), area.x - 24, y);
+  }
+
+  const xTicks = [0, 10, 20, 30, 40].filter((tick) => tick <= cycleMax);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const tick of xTicks) {
+    const x = xOf(tick);
+    ctx.beginPath();
+    ctx.moveTo(x, area.y + area.h);
+    ctx.lineTo(x, area.y + area.h + 11);
+    ctx.stroke();
+    ctx.fillText(String(tick), x, area.y + area.h + 24);
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(area.x, area.y, area.w, area.h);
+  ctx.clip();
+  ctx.strokeStyle = well.hidden || well.curveOutlier || well.earlyOutlier
+    ? palette.neutralMid
+    : well.classification === "positive"
+      ? palette.redStrong
+      : palette.blueMain;
+  ctx.lineWidth = 8;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  curve.forEach((value, index) => {
+    const x = xOf(index);
+    const y = yOf(value);
+    if (index === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  if (shouldDrawCtMarker(well, metrics)) {
+    const ctX = xOf(metrics.ct);
+    const ctY = yOf(metrics.threshold);
+    ctx.strokeStyle = palette.neutralMid;
+    ctx.lineWidth = 4;
+    ctx.setLineDash([14, 12]);
+    ctx.beginPath();
+    ctx.moveTo(area.x, ctY);
+    ctx.lineTo(area.x + area.w, ctY);
+    ctx.moveTo(ctX, area.y);
+    ctx.lineTo(ctX, area.y + area.h);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = palette.neutralBlack;
+    ctx.beginPath();
+    ctx.arc(ctX, ctY, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = "700 28px Arial, Helvetica, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const cqLabel = `Cq ${formatMetricValue(metrics.ct, 1)}`;
+    const cqLabelX = Math.min(ctX + 18, area.x + area.w - 130);
+    const cqLabelY = Math.min(ctY + 18, area.y + area.h - 34);
+    ctx.fillText(cqLabel, cqLabelX, cqLabelY);
+  }
+  ctx.restore();
+
+  ctx.fillStyle = palette.neutralBlack;
+  ctx.font = "700 38px Arial, Helvetica, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  ctx.fillText("Single-well RT-dPCR signal", area.x + area.w / 2, 34);
+
+  const xAxisFontSize = 34;
+  const summaryFontSize = 24;
+  const xAxisLineGap = Math.round(xAxisFontSize * 0.5);
+  const xAxisLineY = height - 92;
+  ctx.font = `700 ${xAxisFontSize}px Arial, Helvetica, sans-serif`;
+  ctx.textBaseline = "top";
+  ctx.fillText("PCR cycle number", area.x + area.w / 2, xAxisLineY);
+  ctx.save();
+  ctx.translate(48, area.y + area.h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText("Normalized fluorescence intensity (a.u.)", 0, 0);
+  ctx.restore();
+
+  ctx.font = `700 ${summaryFontSize}px Arial, Helvetica, sans-serif`;
+  ctx.fillStyle = palette.neutralDark;
+  ctx.textBaseline = "top";
+  const status = well.hidden || well.curveOutlier || well.earlyOutlier
+    ? "Review"
+    : well.classification === "positive"
+      ? "Positive"
+      : "Negative";
+  const summary = `Experiment ${getExperimentId()} | Well #${well.id} | ${status} | Cq ${getCtDisplay(well, metrics)}`;
+  ctx.fillText(summary, area.x + area.w / 2, xAxisLineY + xAxisFontSize + xAxisLineGap);
+  ctx.restore();
+}
+
 function saveSelectedCurvePng() {
   if (!state.selected || state.selected.deleted) return;
   const curve = state.data.singleCurves[state.selected.curveKey];
   if (!curve) return;
 
-  drawSingleChart();
-  const source = state.single.canvas;
-  const labelHeight = 46;
   const exportCanvas = document.createElement("canvas");
-  exportCanvas.width = source.width;
-  exportCanvas.height = source.height + labelHeight;
-  const ctx = exportCanvas.getContext("2d");
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-  ctx.drawImage(source, 0, 0);
-
-  const dpr = window.devicePixelRatio || 1;
-  const label = `Experiment ${getExperimentId()} | Well #${state.selected.id} | ${state.selected.classification}`;
-  ctx.fillStyle = "rgba(9, 44, 61, 0.95)";
-  ctx.fillRect(0, source.height, exportCanvas.width, labelHeight);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `700 ${Math.round(15 * dpr)}px Arial, Helvetica, sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, exportCanvas.width / 2, source.height + labelHeight / 2);
+  exportCanvas.width = 1200;
+  exportCanvas.height = 900;
+  drawNatureStyleSingleCurve(exportCanvas, curve, state.selected);
 
   const link = document.createElement("a");
   const experiment = sanitizeFilename(getExperimentId());
   const wellId = sanitizeFilename(state.selected.id);
-  link.download = `${experiment}_well_${wellId}_single_curve.png`;
+  link.download = `${experiment}_well_${wellId}_nature_single_curve_300dpi.png`;
   link.href = exportCanvas.toDataURL("image/png");
   document.body.appendChild(link);
   link.click();
@@ -867,6 +1077,9 @@ function setActivePage(pageName) {
   if (pageName === "interactive") {
     window.requestAnimationFrame(redrawAll);
   }
+  if (pageName === "browser") {
+    scheduleResultPreviewFit();
+  }
 }
 
 function getImageAssets() {
@@ -895,6 +1108,7 @@ function fitResultPreviewImage() {
   if (!resultImagePreviewEl?.src) return;
   const stage = resultImagePreviewEl.closest(".image-stage");
   if (!stage || !resultImagePreviewEl.naturalWidth || !resultImagePreviewEl.naturalHeight) return;
+  if (stage.clientWidth < 240 || stage.clientHeight < 240) return;
   const padding = 42;
   const availableWidth = Math.max(120, stage.clientWidth - padding);
   const availableHeight = Math.max(120, stage.clientHeight - padding);
@@ -906,6 +1120,12 @@ function fitResultPreviewImage() {
   const height = Math.floor(resultImagePreviewEl.naturalHeight * scale);
   resultImagePreviewEl.style.width = `${width}px`;
   resultImagePreviewEl.style.height = `${height}px`;
+}
+
+function scheduleResultPreviewFit() {
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(fitResultPreviewImage);
+  });
 }
 
 function makeImageButton(item, index, onSelect) {
@@ -922,7 +1142,7 @@ function selectBrowserImage(item, activeButton) {
   resultImagePreviewEl.style.width = "";
   resultImagePreviewEl.style.height = "";
   if (resultImagePreviewEl.complete) {
-    window.requestAnimationFrame(fitResultPreviewImage);
+    scheduleResultPreviewFit();
   }
   browserEmptyEl.textContent = item.label || item.fileName || "Selected image";
   Array.from(imageCatalogEl.children).forEach((button) => button.classList.toggle("active", button === activeButton));
@@ -1079,7 +1299,7 @@ async function init() {
   window.addEventListener("resize", () => {
     window.requestAnimationFrame(() => {
       redrawAll();
-      fitResultPreviewImage();
+      scheduleResultPreviewFit();
     });
   });
 }
