@@ -102,6 +102,117 @@ python -m http.server 8766 --directory "D:\RT-dPCR_Device\image process python\t
 - 调整 `Well opacity`：改变芯片微孔叠加层透明度。
 - 点击 `Show photo background`：显示终点实拍图背景，方便与原图对照。
 
+## Ct/Cq 计算方法
+
+viewer 中的 Ct/Cq 采用自适应阈值法（adaptive Cq）。在当前实现中，`Ct` 与 `Cq` 指同一个定量循环数：即单孔 RT-dPCR 荧光曲线第一次可靠超过阈值线时对应的循环数。`Cq` 是 MIQE 指南中更推荐的术语，界面中保留 `Ct` 是为了便于和常见 PCR 软件习惯对应。
+
+设某个单孔的荧光曲线为：
+
+```text
+y_1, y_2, ..., y_n
+```
+
+首先对曲线做轻微移动平均平滑，当前使用半径为 1 的窗口：
+
+```text
+s_i = mean(y_{i-1}, y_i, y_{i+1})
+```
+
+边界点只使用实际存在的相邻数据。前 8 个循环作为基线区：
+
+```text
+B = {s_1, s_2, ..., s_8}
+```
+
+基线值使用中位数，减少早期异常点对基线的影响：
+
+```text
+baseline = median(B)
+```
+
+基线噪声使用稳健标准差估计：
+
+```text
+MAD = median(|B_i - median(B)|)
+sigma_MAD = 1.4826 × MAD
+sigma_STD = std(B)
+baselineStd = max(sigma_MAD, 0.35 × sigma_STD)
+```
+
+其中 `1.4826 × MAD` 是在近似正态分布下将 MAD 转换为标准差量级的常用系数。随后计算峰值和扩增幅度：
+
+```text
+peak = max(s_i)
+amplitude = peak - baseline
+```
+
+自适应阈值增量为：
+
+```text
+thresholdDelta = max(
+  4 × baselineStd,
+  0.16 × amplitude,
+  0.8
+)
+```
+
+为了避免阈值被放得过高，阈值增量还会被限制在扩增幅度的 35% 以内：
+
+```text
+thresholdDelta = min(thresholdDelta, 0.35 × amplitude)
+```
+
+最终阈值为：
+
+```text
+threshold = baseline + thresholdDelta
+```
+
+不是所有曲线都会给出 Ct/Cq。当前实现要求曲线同时满足扩增幅度和上升斜率要求：
+
+```text
+amplitude >= max(2, 4 × baselineStd)
+```
+
+并且：
+
+```text
+maxSlope >= max(2 × slopeNoise, 0.18 × baselineStd, 0.01)
+```
+
+其中：
+
+```text
+slope_i = s_i - s_{i-1}
+slopeNoise = robustSigma({slope_2, ..., slope_8})
+maxSlope = max(slope_i)
+```
+
+如果曲线不满足这些条件，说明缺少可靠扩增趋势，viewer 不会给出 Ct/Cq，而是显示 `NA`、`N/A` 或 `Review`。
+
+Ct/Cq 的数值通过首次跨阈值点的线性插值得到。若存在某一循环位置满足：
+
+```text
+s_{i-1} < threshold 且 s_i >= threshold
+```
+
+则：
+
+```text
+fraction = (threshold - s_{i-1}) / (s_i - s_{i-1})
+Ct = Cq = (i - 1) + fraction
+```
+
+因此 Ct/Cq 可以是小数，例如 `21.5` 表示曲线大约在第 21 和第 22 个循环之间穿过阈值线。
+
+阴性孔原则上不应给出 Ct/Cq。阴性孔的荧光波动、基线漂移或偶然穿线不应解释为真实扩增，因此 viewer 对阴性孔直接显示：
+
+```text
+Ct/Cq = N/A
+```
+
+需要注意的是，终点阳性分类和实时扩增 Ct/Cq 是两个不同层面的判断。终点阳性表示最终荧光强度被分类为阳性，但如果实时曲线没有足够清晰的 S 型扩增趋势，仍然不应强行给出 Ct/Cq。
+
 ## Git 与数据管理
 
 仓库主要管理代码和网页前端文件。原始实验图片、校正图片、生成的 CSV/大图等通常体积较大，已通过 `.gitignore` 忽略：
