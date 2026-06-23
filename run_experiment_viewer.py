@@ -11,9 +11,13 @@ VIEWER_BUILDER = Path(
 )
 
 WORKFLOWS = {
-    "v2": ROOT / "workflow_original_to_endpoint_v2.py",
-    "standard": ROOT / "workflow_original_to_endpoint_v2.py",
-    "all-positive": ROOT / "workflow_original_to_endpoint_all_positive.py",
+    "v2": ROOT / "workflow-template-v2.py",
+    "standard": ROOT / "workflow-template-v2.py",
+    "1210-2": ROOT / "workflow-1210-2.py",
+    "1210-4": ROOT / "workflow-1210-4.py",
+    "1126-3": ROOT / "workflow-1126-3.py",
+    "1203-5": ROOT / "workflow-1203-5.py",
+    "all-positive": ROOT / "workflow-1210-2.py",
 }
 
 
