@@ -55,6 +55,7 @@ CURVE_Y_BOTTOM = -0.15
 POSITIVE_CURVE_Y_TOP = 0.0
 CURVE_HEADROOM_RATIO = 0.20
 CURVE_VALUE_MODE = "raw"
+CURVE_DISPLAY_OFFSET = 0.0
 
 CURVE_OUTLIER_MAD_FACTOR = 3.5
 CURVE_FIG_WIDTH = 9.0
@@ -650,9 +651,9 @@ def select_curve_matrix(raw_matrix, sum_matrix=None):
     normalized_matrix = normalize_curve_matrix(raw_matrix, CURVE_BASELINE_CYCLES)
 
     if CURVE_VALUE_MODE == "raw":
-        return raw_matrix, delta_matrix, normalized_matrix, None, raw_matrix, "Green gray value"
+        return raw_matrix, delta_matrix, normalized_matrix, None, raw_matrix, "Fluorescence change (a.u.)"
     if CURVE_VALUE_MODE == "delta":
-        return raw_matrix, delta_matrix, normalized_matrix, None, delta_matrix, "Green gray value change"
+        return raw_matrix, delta_matrix, normalized_matrix, None, delta_matrix, "Fluorescence change (a.u.)"
     if CURVE_VALUE_MODE == "early_max_zero":
         early_zero_matrix = early_max_zero_curve_matrix(raw_matrix, CURVE_BASELINE_CYCLES)
         return raw_matrix, delta_matrix, normalized_matrix, None, early_zero_matrix, "Fluorescence change (a.u.)"
@@ -660,10 +661,16 @@ def select_curve_matrix(raw_matrix, sum_matrix=None):
         if sum_matrix is None:
             raise ValueError("sum_delta mode requires summed well intensities.")
         sum_delta_matrix = delta_curve_matrix(sum_matrix, CURVE_BASELINE_CYCLES)
-        return raw_matrix, delta_matrix, normalized_matrix, sum_delta_matrix, sum_delta_matrix, "Integrated fluorescence change (a.u.)"
+        return raw_matrix, delta_matrix, normalized_matrix, sum_delta_matrix, sum_delta_matrix, "Fluorescence change (a.u.)"
     if CURVE_VALUE_MODE == "normalized":
-        return raw_matrix, delta_matrix, normalized_matrix, None, normalized_matrix, "Normalized F"
+        return raw_matrix, delta_matrix, normalized_matrix, None, normalized_matrix, "Fluorescence change (a.u.)"
     raise ValueError(f"Unknown curve value mode: {CURVE_VALUE_MODE}")
+
+
+def apply_curve_display_offset(curve_matrix):
+    if CURVE_VALUE_MODE == "raw" and CURVE_DISPLAY_OFFSET != 0:
+        return (curve_matrix + float(CURVE_DISPLAY_OFFSET)).astype(np.float32)
+    return curve_matrix
 
 
 def detect_curve_outliers(smoothed_matrix):
@@ -754,6 +761,7 @@ def plot_classified_well_curves(corrected_paths, wells, label, line_alpha, y_top
 
     raw_matrix, sum_matrix = extract_well_curve_matrices(corrected_paths, wells)
     raw_matrix, delta_matrix, normalized_matrix, sum_delta_matrix, plot_matrix, y_label = select_curve_matrix(raw_matrix, sum_matrix)
+    plot_matrix = apply_curve_display_offset(plot_matrix)
     smoothed_matrix = smooth_curve_matrix(plot_matrix, CURVE_SMOOTH_WINDOW)
 
     csv_path = os.path.join(RESULT_DIR, f"{label}_well_curves.csv")
@@ -775,7 +783,7 @@ def plot_classified_well_curves(corrected_paths, wells, label, line_alpha, y_top
         )
 
     ax.set_title(
-        f"{label.capitalize()} wells smoothed curves",
+        f"real-time dPCR {label} curves",
         fontsize=PLOT_TITLE_FONTSIZE,
         fontweight=PLOT_FONT_WEIGHT,
         pad=10,
@@ -871,15 +879,17 @@ def plot_combined_well_curves(corrected_paths, negative_wells, positive_wells):
 
     negative_smoothed = np.empty((0, len(corrected_paths)), dtype=np.float32)
     positive_smoothed = np.empty((0, len(corrected_paths)), dtype=np.float32)
-    y_label = "Green gray value change"
+    y_label = "Fluorescence change (a.u.)"
 
     if negative_wells:
         negative_raw, negative_sum = extract_well_curve_matrices(corrected_paths, negative_wells)
         _, _, _, _, negative_plot_matrix, y_label = select_curve_matrix(negative_raw, negative_sum)
+        negative_plot_matrix = apply_curve_display_offset(negative_plot_matrix)
         negative_smoothed = smooth_curve_matrix(negative_plot_matrix, CURVE_SMOOTH_WINDOW)
     if positive_wells:
         positive_raw, positive_sum = extract_well_curve_matrices(corrected_paths, positive_wells)
         _, _, _, _, positive_plot_matrix, y_label = select_curve_matrix(positive_raw, positive_sum)
+        positive_plot_matrix = apply_curve_display_offset(positive_plot_matrix)
         positive_smooth_window = max(CURVE_SMOOTH_WINDOW, POSITIVE_COMBINED_SMOOTH_WINDOW)
         positive_smoothed = smooth_curve_matrix(positive_plot_matrix, positive_smooth_window)
 
@@ -960,7 +970,7 @@ def plot_combined_well_curves(corrected_paths, negative_wells, positive_wells):
         all_curves.append(np.zeros((1, len(corrected_paths)), dtype=np.float32))
     all_smoothed = np.vstack(all_curves)
 
-    ax.set_title("RT-dPCR smoothed curves", fontsize=PLOT_TITLE_FONTSIZE, fontweight=PLOT_FONT_WEIGHT, pad=10)
+    ax.set_title("real-time dPCR curves", fontsize=PLOT_TITLE_FONTSIZE, fontweight=PLOT_FONT_WEIGHT, pad=10)
     ax.set_xlabel("Cycle", fontsize=PLOT_LABEL_FONTSIZE, fontweight=PLOT_FONT_WEIGHT)
     ax.set_ylabel(y_label, fontsize=PLOT_LABEL_FONTSIZE, fontweight=PLOT_FONT_WEIGHT)
     ax.set_xlim(1, max(1, len(corrected_paths)))
@@ -1079,6 +1089,12 @@ def parse_args():
     parser.add_argument("--manual-y-max", type=float, default=MANUAL_Y_MAX)
     parser.add_argument("--curve-headroom-ratio", type=float, default=CURVE_HEADROOM_RATIO)
     parser.add_argument("--curve-outlier-mad-factor", type=float, default=CURVE_OUTLIER_MAD_FACTOR)
+    parser.add_argument(
+        "--curve-display-offset",
+        type=float,
+        default=CURVE_DISPLAY_OFFSET,
+        help="Display-only y offset for raw curves. Positive moves raw curves up; negative moves them down. Raw data and classification are unchanged.",
+    )
     parser.add_argument("--curve-fig-width", type=float, default=CURVE_FIG_WIDTH)
     parser.add_argument("--curve-fig-height", type=float, default=CURVE_FIG_HEIGHT)
     parser.add_argument("--plot-title-fontsize", type=float, default=PLOT_TITLE_FONTSIZE)
@@ -1166,6 +1182,7 @@ if __name__ == "__main__":
     MANUAL_Y_MAX = args.manual_y_max
     CURVE_HEADROOM_RATIO = args.curve_headroom_ratio
     CURVE_OUTLIER_MAD_FACTOR = args.curve_outlier_mad_factor
+    CURVE_DISPLAY_OFFSET = args.curve_display_offset
     CURVE_FIG_WIDTH = args.curve_fig_width
     CURVE_FIG_HEIGHT = args.curve_fig_height
     PLOT_TITLE_FONTSIZE = args.plot_title_fontsize
