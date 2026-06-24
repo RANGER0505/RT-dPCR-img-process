@@ -15,6 +15,13 @@ git/
 *.tiff
 *.bmp
 
+# Versioned report figures
+!docs/
+!docs/assets/
+!docs/assets/*.png
+!docs/results/
+!docs/results/*.csv
+
 # Keep small UI assets that are part of the viewer template
 !interactive_viewer/assets/
 !interactive_viewer/assets/xjtu-emblem.png
